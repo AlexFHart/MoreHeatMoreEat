@@ -1,0 +1,190 @@
+### ==================================================================================================================================================================== ###
+### Data Pre-processing for gene expression analysis
+### ==================================================================================================================================================================== ###
+
+
+### ==================================================================================================================================================================== ###
+### FastQC - to check the quality of the libraries
+### ==================================================================================================================================================================== ###
+
+#!/bin/bash -l
+#SBATCH -J fastqc_loop
+#SBATCH -p core 
+#SBATCH -n 4
+#SBATCH -t 14:00:00
+
+module load bioinfo-tools
+module load FastQC/0.11.9
+
+fastqc --threads 4 \
+-o /proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/FastQC \
+/proj/sexsel_data/snic2020-16-129_whole_project_directory/private/RNA/UH-3042/211015_A00181_0359_AHJYYLDSX2/Sample_UH-3042-FM1L1/UH-3042-FM1L1_S79_L004_R1_001.fastq.gz \
+/proj/sexsel_data/snic2020-16-129_whole_project_directory/private/RNA/UH-3042/211015_A00181_0359_AHJYYLDSX2/Sample_UH-3042-FM1L1/UH-3042-FM1L1_S79_L004_R2_001.fastq.gz \ # etc.
+
+
+### ==================================================================================================================================================================== ###
+### Trimmomatic - to remove residual sequencing adapters and trim off poor-quality bases from read ends. Performed via loop for each library mate pair.
+### ==================================================================================================================================================================== ###
+
+#!/bin/bash
+#SBATCH -J TrimmoLoop
+#SBATCH -p core 
+#SBATCH -t 01:00:00
+
+L = $1
+
+module load bioinfo-tools
+module load trimmomatic/0.39
+
+java -jar $TRIMMOMATIC_ROOT/trimmomatic.jar PE /proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/SimLink/$1_R1.fastq.gz /proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/SimLink/$1_R2.fastq.gz -baseout $1_trimmed.fq.gz ILLUMINACLIP:/home/aleha596/project/alex/Trimmo/TruSeq3-PE.fa:2:30:10:2:true LEADING:20 TRAILING:20 SLIDINGWINDOW:5:20 MINLEN:20
+
+
+### ==================================================================================================================================================================== ###
+### HISAT2 - to align reads to a reference genome. To do this, you need to first extract exons and splice sites from annotation and generate a genome index with "build" 
+### ==================================================================================================================================================================== ###
+
+# c.mac new genome index
+# gotta convert anno first
+#!/bin/bash
+#SBATCH -J index_prep
+#SBATCH -p core 
+#SBATCH -t 01:00:00
+
+module load bioinfo-tools
+module load gffread/0.12.6
+
+gffread assembly-scaffolded.rc3_maker_final.liftover.gff3 -T -o new_anno.gtf
+
+module load HISAT2/2.2.1
+module load python
+
+python hisat2_extract_splice_sites.py new_anno.gtf > genome.ss
+python hisat2_extract_exons.py new_anno.gtf > genome.exon
+
+
+#!/bin/bash
+#SBATCH -J new_index
+#SBATCH -p core 
+#SBATCH -n 16
+#SBATCH -t 03:00:00
+
+module load bioinfo-tools
+module load HISAT2/2.2.1
+
+hisat2-build -p 16 --exon genome.exon --ss genome.ss /proj/sexsel_data/snic2020-16-129_whole_project_directory/private/Stockholm_RNA_delivery06265/VD-3257/alex/newgenome/c.mac_HiC_assembly.fasta new_cmac
+
+
+#!/bin/bash -l
+#SBATCH -J hisat2_loopR
+#SBATCH -p core 
+#SBATCH -n 16
+#SBATCH -t 08:00:00 
+
+module load bioinfo-tools
+module load HISAT2/2.2.1
+
+L = $1
+
+hisat2 -x /crex/proj/sexsel_data/snic2020-16-129_whole_project_directory/private/Stockholm_RNA_delivery06265/VD-3257/alex/newgenome/new_cmac \
+-1 /proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/Trimmo/trimmed/$1_trimmed_1P.fq.gz \
+-2 /proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/Trimmo/trimmed/$1_trimmed_2P.fq.gz \
+-U /proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/Trimmo/trimmed/$1_trimmed_1U.fq.gz,/proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/Trimmo/trimmed/$1_trimmed_2U.fq.gz \
+-S $1_mapped \
+--summary-file $1_alignR_report.txt \
+--rna-strandness RF \
+--new-summary \
+--very-sensitive \
+--threads 16
+
+
+### ==================================================================================================================================================================== ###
+### SAMtools - to sort by coordinates, filter unmapped reads out, and generate library indexes
+### ==================================================================================================================================================================== ###
+
+#!/bin/bash
+#SBATCH -J samtools_sort
+#SBATCH -p core 
+#SBATCH -t 02:30:00
+
+module load bioinfo-tools
+module load samtools/1.17
+
+L = $1
+
+samtools sort \
+/proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/mapping/$1_mapped \
+-O bam \
+-o /proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/samtools/sorted/$1_sorted.BAM
+
+
+#!/bin/bash
+# be careful; -F means exclude this flag, while -f means include only this flag.
+
+#SBATCH -J samtools_filter
+#SBATCH -p core 
+#SBATCH -t 01:00:00
+
+module load bioinfo-tools
+module load samtools/1.17
+
+L = $1
+
+samtools view -f 3 \
+/proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/samtools/sorted/$1_sorted.BAM \
+-b \
+-o /proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/samtools/filtered/$1_filt.BAM
+
+#!/bin/bash
+#SBATCH -J samtools_index
+#SBATCH -p core 
+#SBATCH -t 01:00:00
+
+module load bioinfo-tools
+module load samtools/1.17
+
+L = $1
+
+samtools index -b \
+/proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/samtools/filtered/$1_filt.BAM \
+-o $1_filt.bai
+
+
+# bonus: please give me the stats 
+wait
+
+samtools stats /proj/sexsel_data/snic2020-16-129_whole_project_directory/private/Stockholm_RNA_delivery06265/VD-3257/alex/sorting/filtered/$1_filtR.BAM > $1_Rstats.txt
+
+
+
+### ==================================================================================================================================================================== ###
+### HTSeqCount - to count reads per genomic feature
+### ==================================================================================================================================================================== ###
+
+#!/bin/bash 
+#SBATCH -J HTSeqcount_batch
+#SBATCH -p core 
+#SBATCH -n 1
+#SBATCH -t 06:00:00 
+
+module load bioinfo-tools
+module load htseq/2.0.2
+
+L = $1
+
+htseq-count \
+--format=bam \
+-r pos \
+--stranded=reverse \
+/proj/sexsel_data/snic2020-16-129_whole_project_directory/private/HS_MR_remake/samtools/filtered/$1_filt.BAM \
+/proj/sexsel_data/snic2020-16-129_whole_project_directory/private/Stockholm_RNA_delivery06265/VD-3257/alex/newgenome/new_anno.gtf \
+> $1_counts.txt
+
+
+
+
+
+
+
+
+
+
