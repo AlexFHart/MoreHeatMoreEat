@@ -1,0 +1,78 @@
+# new vectors: functional terms and GO
+
+setwd("~/Library/Mobile Documents/com~apple~CloudDocs/Documents/PostDoc Folder/Scripts & Code/ThermAdapt/VectorAnalysis")
+setwd("~/Documents/Alex/github/ThermAdapt/VectorAnalysis")
+
+library(dplyr)
+library(tibble)
+library(stringr)
+library(GOstats)
+library("GSEABase")
+
+# load in our 12,000 lists
+universe <- read.csv("whole_universe.csv") # this is a spreadsheet of locus IDs in the current and previous genome annotations, and the attatched GO terms
+grand_list <- read.csv("grand_list.csv") # this is a spreadsheet of gene lists, one per column, e.g. MR unique downregulated, overlap antagonists
+
+# setting up the reftable: a list of all IDs from the current annotation and their GO terms
+AnGo <- read.table("~/Documents/Alex/github/ThermAdapt/VectorAnalysis/scrapped/GO Analysis Results/old_Anno_GO.csv", sep = ",", header = TRUE)
+AnGo <- read.table("~/Library/Mobile Documents/com~apple~CloudDocs/Documents/PostDoc Folder/Scripts & Code/ThermAdapt/VectorAnalysis/scrapped/GO Analysis Results/old_Anno_GO.csv", sep = ",", header = TRUE)
+
+goframeData <- data.frame(AnGo$value, AnGo$Evidence, AnGo$New_ID)
+goFrame = GOFrame(goframeData,organism="Callosobruchus maculatus") # just tags it as a GO frame object
+goAllFrame = GOAllFrame(goFrame) # more formatting i think, linking GO terms/categories
+gsc <- GeneSetCollection(goAllFrame, setType = GOCollection()) # standardising gene set collections
+
+# if we put the list stuff here don;t need to repeat reftable setup
+
+list_of_interest <- as.data.frame(grand_list$overlap_mr)
+colnames(list_of_interest) <- c("GeneID")
+
+# convert our genomics to transcripts
+
+list_of_interest <- inner_join(list_of_interest, universe, by = c("GeneID" = "Genomic_ID"))
+list_of_interest <- as.data.frame(list_of_interest$Transcript_ID)
+
+
+
+# MF, BP, CC
+bp_params <- GSEAGOHyperGParams(name="GO bp", 
+                                geneSetCollection=gsc, 
+                                geneIds = list_of_interest, 
+                                universeGeneIds = AnGo$New_ID, 
+                                ontology = "BP", 
+                                pvalueCutoff = 0.05, 
+                                conditional = FALSE, 
+                                testDirection = "over")
+
+bp_test <- hyperGTest(bp_params)
+bp <- summary(bp_test)
+
+write.csv(bp, "bp_output.csv")
+
+mf_params <- GSEAGOHyperGParams(name="GO mf", 
+                                geneSetCollection=gsc, 
+                                geneIds = list_of_interest, 
+                                universeGeneIds = AnGo$New_ID, 
+                                ontology = "MF", 
+                                pvalueCutoff = 0.05, 
+                                conditional = FALSE, 
+                                testDirection = "over")
+
+mf_test <- hyperGTest(mf_params)
+mf <- summary(mf_test)
+
+write.csv(mf, "mf_output.csv")
+
+cc_params <- GSEAGOHyperGParams(name="GO cc", 
+                                geneSetCollection=gsc, 
+                                geneIds = list_of_interest, 
+                                universeGeneIds = AnGo$New_ID, 
+                                ontology = "CC", 
+                                pvalueCutoff = 0.05, 
+                                conditional = FALSE, 
+                                testDirection = "over")
+
+cc_test <- hyperGTest(cc_params)
+cc <- summary(cc_test)
+
+write.csv(cc, "cc_output.csv")
