@@ -1,0 +1,76 @@
+
+#-----------------------------------------------------------------------#
+# extracting pseudocounts for vector projection
+
+# step 1: set-up and data input
+# setting up the work environment
+library(edgeR)
+# setwd("~/Documents/Alex/Scripts and other coding/edgeR/counts")
+
+# reading in files
+files <- read.csv("temp_groups.csv")
+# files <- read.table("temp_groups.tsv", sep = "\t", header = TRUE)
+counts <- readDGE(files$Files, header=FALSE, labels = files$Summary, group = files$group)
+
+# cleaning up meta tags
+noint<-rownames(counts) %in% c("__no_feature", "__ambiguous", "__too_low_aQual", "__not_aligned", "__alignment_not_unique")
+counts<-counts[!noint,]
+
+# manual recalculation of library sizes
+counts$samples$lib.size <- colSums(counts$counts)
+
+#-----------------------------------------------------------------------#
+# step 1.5: design set-up
+# model design (additive model)
+assays <- as.factor(files$Assay)
+regime <- as.factor(files$Regime)
+origin <- as.factor(files$Origin)
+
+assays <- relevel(assays, "29")
+regime <- relevel(regime, "Ancestral")
+origin <- relevel(origin, "California")
+
+design <- model.matrix(~0 + origin + assays + regime)
+colnames(design) <- c("Brazil", "California", "Yemen", 
+                      "Assay23", "Assay35", 
+                      "RegimeCold", "RegimeHot", "RegimeSwi")
+
+#-----------------------------------------------------------------------#
+# step 2: filtering
+# filtering out very low read counts
+keep <- filterByExpr(counts, design) 
+
+counts <- counts[keep, , keep.lib.sizes=FALSE]
+
+# low CPM filtering + features in two samples or more filtering
+countsPerMillion <- cpm(counts)
+
+countCheck <- countsPerMillion > 3
+
+keep <- which(rowSums(countCheck) >= 2)
+
+counts <- counts[keep,]
+
+#-----------------------------------------------------------------------#
+# step 3: normalisation
+counts <- calcNormFactors(object = counts)
+counts <- normLibSizes(counts)
+
+
+#-----------------------------------------------------------------------#
+# step 4: dispersion estimation & model fitting
+# "traditional" GLM approach
+# first need some dispersions/BCVs
+counts <- estimateGLMCommonDisp(counts, design)
+counts <- estimateGLMTrendedDisp(counts, design)
+counts <- estimateGLMTagwiseDisp(counts, design)
+
+# then we can try and route around makeContrasts
+fit <- glmQLFit(counts, design, robust = TRUE)
+
+
+#-----------------------------------------------------------------------#
+# step 5: pseudocount extraction and export
+pseudocounts <- cpm(counts, normalized.lib.size=TRUE)
+
+write.csv(pseudocounts, "pseudocounts.csv")
